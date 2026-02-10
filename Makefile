@@ -1,7 +1,7 @@
 NAME        := ioi_testing_image
 CONTAINER   := ioi_testing_container
 
-RUN_FLAG    := -p 8000:8000 --privileged
+RUN_FLAG    := -p 8000:8000 --privileged -d
 
 all: run
 
