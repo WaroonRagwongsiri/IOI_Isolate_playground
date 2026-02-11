@@ -1,5 +1,6 @@
 import subprocess
 import uuid
+import multiprocessing as mp
 from multiprocessing import Process, Queue, Manager
 from pathlib import Path
 from queue import Full
@@ -13,10 +14,21 @@ WORKERS = 4
 JOB_QUEUE_MAX = 200
 
 
-# Shared state (initialized at import; start_workers() must be called explicitly)
-job_queue: "Queue[Optional[tuple[str, dict[str, Any]]]]" = Queue(maxsize=JOB_QUEUE_MAX)
-manager = Manager()
-jobs = manager.dict()
+_ctx: Optional[mp.context.BaseContext] = None
+job_queue = None
+manager = None
+jobs = None
+_worker_processes: list[Process] = []
+
+def init_mp():
+	global _ctx, job_queue, manager, jobs
+	if jobs is not None:
+		return
+
+	_ctx = mp.get_context("fork")
+	job_queue = _ctx.Queue(maxsize=JOB_QUEUE_MAX)
+	manager = _ctx.Manager()
+	jobs = manager.dict()
 
 
 class JobResult(TypedDict, total=False):
@@ -119,12 +131,15 @@ def worker_loop(box_id: int) -> None:
 
 
 def start_workers() -> None:
-	for box_id in range(WORKERS):
-		p = Process(target=worker_loop, args=(box_id,), daemon=True)
-		p.start()
+    init_mp()
+    for box_id in range(WORKERS):
+        p = _ctx.Process(target=worker_loop, args=(box_id,), daemon=True)
+        p.start()
+        _worker_processes.append(p)
 
 
 def submit_job(code: str, stdin: Optional[str]) -> tuple[str, str]:
+	init_mp()
 	job_id = str(uuid.uuid4())
 	jobs[job_id] = {"status": "queued"}
 
@@ -139,6 +154,7 @@ def submit_job(code: str, stdin: Optional[str]) -> tuple[str, str]:
 
 
 def get_job(job_id: str) -> Optional[dict[str, Any]]:
-	if job_id not in jobs:
-		return None
-	return dict(jobs[job_id])
+    init_mp()
+    if job_id not in jobs:
+        return None
+    return dict(jobs[job_id])
