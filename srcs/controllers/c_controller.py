@@ -1,7 +1,9 @@
 import subprocess
 import uuid
 import multiprocessing as mp
-from multiprocessing import Process, Queue, Manager
+from multiprocessing import Process
+from multiprocessing.queues import Queue as MPQueue
+from multiprocessing.managers import SyncManager
 from pathlib import Path
 from queue import Full
 from typing import Any, Optional, TypedDict
@@ -15,9 +17,9 @@ JOB_QUEUE_MAX = 200
 
 
 _ctx: Optional[mp.context.BaseContext] = None
-job_queue = None
-manager = None
-jobs = None
+job_queue: Optional[MPQueue] = None
+manager: Optional[SyncManager] = None
+jobs: Optional[dict] = None
 _worker_processes: list[Process] = []
 
 def init_mp():
@@ -29,7 +31,6 @@ def init_mp():
 	job_queue = _ctx.Queue(maxsize=JOB_QUEUE_MAX)
 	manager = _ctx.Manager()
 	jobs = manager.dict()
-
 
 class JobResult(TypedDict, total=False):
 	status: str
@@ -131,15 +132,34 @@ def worker_loop(box_id: int) -> None:
 
 
 def start_workers() -> None:
-    init_mp()
-    for box_id in range(WORKERS):
-        p = _ctx.Process(target=worker_loop, args=(box_id,), daemon=True)
-        p.start()
-        _worker_processes.append(p)
+	init_mp()
+	for box_id in range(WORKERS):
+		p = _ctx.Process(target=worker_loop, args=(box_id,), daemon=True)
+		p.start()
+		_worker_processes.append(p)
+
+def stop_workers() -> None:
+	global manager
+
+	if job_queue is not None:
+		for _ in range(len(_worker_processes) or WORKERS):
+			try:
+				job_queue.put_nowait(None)
+			except Full:
+				job_queue.put(None)
+
+	for p in _worker_processes:
+		if p.is_alive():
+			p.join(timeout=5)
+
+	_worker_processes.clear()
+
+	if manager is not None:
+		manager.shutdown()
+		manager = None
 
 
 def submit_job(code: str, stdin: Optional[str]) -> tuple[str, str]:
-	init_mp()
 	job_id = str(uuid.uuid4())
 	jobs[job_id] = {"status": "queued"}
 
@@ -154,7 +174,6 @@ def submit_job(code: str, stdin: Optional[str]) -> tuple[str, str]:
 
 
 def get_job(job_id: str) -> Optional[dict[str, Any]]:
-    init_mp()
-    if job_id not in jobs:
-        return None
-    return dict(jobs[job_id])
+	if job_id not in jobs:
+		return None
+	return dict(jobs[job_id])
