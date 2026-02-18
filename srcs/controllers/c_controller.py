@@ -10,7 +10,7 @@ from typing import Any, Optional, TypedDict
 
 
 ISOLATE = "isolate"
-CC = "cc"
+CC = "/usr/bin/gcc"
 
 WORKERS = 4
 JOB_QUEUE_MAX = 200
@@ -75,10 +75,18 @@ def run_job_in_box(box_id: int, job_id: str, program: dict[str, Any]) -> None:
 			(p / "input.txt").write_text(program["stdin"], encoding="utf-8")
 
 		compile_cmd = [
+			ISOLATE,
+			f"--box-id={box_id}",
+			"--processes=64",
+			"--run",
+			"--env=PATH=/usr/bin:/bin",
+			"--chdir=/box",
+			"--",
 			CC,
-			str(p / "main.c"),
+			"main.c",
 			"-o",
-			str(p / "main"),
+			"main",
+			"-B/usr/bin",
 		]
 		c = subprocess.run(compile_cmd, capture_output=True, text=True)
 		if c.returncode != 0:
@@ -99,7 +107,11 @@ def run_job_in_box(box_id: int, job_id: str, program: dict[str, Any]) -> None:
 		]
 		if program.get("stdin") is not None:
 			run_cmd.append("--stdin=input.txt")
-		run_cmd += ["--run", "--", "./main"]
+		run_cmd += [
+			"--run",
+			"--",
+			"./main"
+		]
 
 		r = subprocess.run(run_cmd, capture_output=True, text=True)
 
